@@ -1,0 +1,7 @@
+numpy
+pandas
+transformers
+torch
+biopython
+accelerate
+einops
