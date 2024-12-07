@@ -114,27 +114,26 @@ def vectorize(
         # Save any remaining vectors after processing all rows
         if vectors:
             vectors = np.vstack(vectors)
-            embeddings = _save_embeddings_batch(vectors, embeddings_numpy_file, append=True)
+            embeddings = _save_embeddings_batch(vectors, embeddings_numpy_file)
 
         print(f"Final embeddings shape: {embeddings.shape if embeddings is not None else (0,)}")
     except Exception as e:
         raise RuntimeError(f"Error during vectorization: {e}")
 
 
-def _save_embeddings_batch(vectors: np.ndarray, file_path: str, append: bool = False) -> np.ndarray:
+def _save_embeddings_batch(vectors: np.ndarray, file_path: str) -> np.ndarray:
     """
     Save a batch of embeddings to a NumPy file, appending if the file already exists.
 
     Args:
         vectors (np.ndarray): Batch of vectors to save.
         file_path (str): Path to the NumPy file.
-        append (bool): Whether to append to the file if it exists. Defaults to False.
 
     Returns:
         np.ndarray: The combined embeddings.
     """
     try:
-        if append or _file_exists(file_path):
+        if _file_exists(file_path):
             existing_embeddings = np.load(file_path)
             embeddings = np.concatenate((existing_embeddings, vectors), axis=0)
         else:
