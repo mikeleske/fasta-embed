@@ -1,6 +1,7 @@
-from transformers import AutoTokenizer, AutoModel
+import torch
+from transformers import AutoTokenizer, AutoModel, AutoModelForMaskedLM
 
-def load_model_from_hf(model_name: str):
+def load_model_from_hf(model_name: str, maskedlm: bool = False):
     """
     Loads a model and tokenizer from Hugging Face.
 
@@ -13,15 +14,17 @@ def load_model_from_hf(model_name: str):
     Raises:
         ValueError: If the model name is invalid or loading fails.
     """
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
     try:
         tokenizer = AutoTokenizer.from_pretrained(
             model_name,
             trust_remote_code=True
         )
-        model = AutoModel.from_pretrained(
+        model_cls = AutoModelForMaskedLM if maskedlm else AutoModel
+        model = model_cls.from_pretrained(
             model_name,
             trust_remote_code=True,
-            device_map={"": 0}  # Loads the model onto the first available GPU
+            device_map={"": device}
         )
         return model, tokenizer
     except Exception as e:

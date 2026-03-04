@@ -10,7 +10,7 @@ from utils import parse_fasta
 from utils_bio import get_region
 
 
-def get_emb(model, tokenizer, seq: str, device: str = "cuda") -> torch.Tensor:
+def get_emb(model, tokenizer, seq: str, device: str = None) -> torch.Tensor:
     """
     Generates an embedding for a DNA sequence using a model with mean pooling.
 
@@ -18,22 +18,18 @@ def get_emb(model, tokenizer, seq: str, device: str = "cuda") -> torch.Tensor:
         model (torch.nn.Module): The model.
         tokenizer (PreTrainedTokenizer): The tokenizer corresponding to the model.
         seq (str): The DNA sequence to embed.
-        device (str): Device to use ('cuda' or 'cpu'). Defaults to 'cuda'.
+        device (str): Device to use ('cuda' or 'cpu'). Auto-detected if None.
 
     Returns:
         torch.Tensor: Mean-pooled embedding of the input DNA sequence.
 
     Raises:
         ValueError: If the input sequence is invalid.
-        RuntimeError: If CUDA is selected but unavailable.
     """
     if not isinstance(seq, str):
         raise ValueError("Input sequence must be a string.")
-    
-    if device == "cuda" and not torch.cuda.is_available():
-        raise RuntimeError("CUDA is not available. Use device='cpu' instead.")
 
-    device = torch.device(device)
+    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     
     try:
         inputs = tokenizer(seq, return_tensors="pt")["input_ids"].to(device)
@@ -44,7 +40,73 @@ def get_emb(model, tokenizer, seq: str, device: str = "cuda") -> torch.Tensor:
     except Exception as e:
         raise RuntimeError(f"Error during embedding generation: {e}")
 
+def get_emb_nt(model, tokenizer, seq: str, device: str = None) -> torch.Tensor:
+    """
+    Generates an embedding for a DNA sequence using a model with mean pooling.
 
+    Args:
+        model (torch.nn.Module): The model.
+        tokenizer (PreTrainedTokenizer): The tokenizer corresponding to the model.
+        seq (str): The DNA sequence to embed.
+        device (str): Device to use ('cuda' or 'cpu'). Auto-detected if None.
+
+    Returns:
+        torch.Tensor: Mean-pooled embedding of the input DNA sequence.
+
+    Raises:
+        ValueError: If the input sequence is invalid.
+    """
+    if not isinstance(seq, str):
+        raise ValueError("Input sequence must be a string.")
+
+    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+    
+    try:
+        inputs = tokenizer(seq, return_tensors="pt")["input_ids"].to(device)
+        attention_mask = inputs != tokenizer.pad_token_id
+        torch_outs = model(
+            inputs,
+            attention_mask=attention_mask,
+            encoder_attention_mask=attention_mask,
+            output_hidden_states=True
+        )
+        embeddings = torch_outs['hidden_states'][-1].detach()#.numpy()
+        attention_mask = torch.unsqueeze(attention_mask, dim=-1)
+        mean_sequence_embeddings = (torch.sum(attention_mask*embeddings, axis=-2)/torch.sum(attention_mask, axis=1)).cpu().numpy()
+        return mean_sequence_embeddings
+    except Exception as e:
+        raise RuntimeError(f"Error during embedding generation: {e}")
+
+
+def get_emb_ntv3(model, tokenizer, seqs: list[str], device: str = None) -> np.ndarray:
+    """
+    Generates mean-pooled embeddings for a batch of DNA sequences.
+
+    Args:
+        model (torch.nn.Module): The model.
+        tokenizer (PreTrainedTokenizer): The tokenizer corresponding to the model.
+        seqs (list[str]): Batch of DNA sequences to embed.
+        device (str): Device to use ('cuda' or 'cpu'). Auto-detected if None.
+
+    Returns:
+        np.ndarray: Array of shape (batch_size, embed_dim).
+    """
+    device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+    try:
+        inputs = tokenizer(seqs, add_special_tokens=False, padding=True, pad_to_multiple_of=128, return_tensors="pt")
+        input_ids = inputs["input_ids"].to(device)
+        attention_mask = (input_ids != tokenizer.pad_token_id).long().to(device)
+        with torch.no_grad():
+            out = model(input_ids, attention_mask=attention_mask, output_hidden_states=True)
+        hidden_states = out.hidden_states[-1]
+        mask = attention_mask.unsqueeze(-1)
+        mean_emb = (hidden_states * mask).sum(dim=1) / mask.sum(dim=1)
+        return mean_emb.detach().cpu().numpy()
+    except Exception as e:
+        raise RuntimeError(f"Error during embedding generation: {e}")
+
+    
 def drop_duplicate_sequences(df: pd.DataFrame, column: str = "Seq") -> pd.DataFrame:
     """
     Removes duplicate sequences from a DataFrame based on 'Taxa' and a specified column.
@@ -72,7 +134,8 @@ def vectorize(
     df: pd.DataFrame,
     column: str = "Seq",
     embeddings_numpy_file: str = None,
-    batch_size: int = 10000
+    infer_batch_size: int = 32,
+    save_batch_size: int = 10000
 ) -> None:
     """
     Generate embeddings for sequences in a DataFrame column and save to a NumPy file.
@@ -83,7 +146,8 @@ def vectorize(
         df (pd.DataFrame): The DataFrame containing sequences.
         column (str): The column containing sequences. Defaults to 'Seq'.
         embeddings_numpy_file (str): The file path for saving embeddings.
-        batch_size (int): The number of vectors to process in each batch. Defaults to 10,000.
+        infer_batch_size (int): Sequences per model forward pass. Defaults to 16.
+        save_batch_size (int): Vectors to accumulate before saving to disk. Defaults to 10,000.
 
     Raises:
         ValueError: If required parameters are missing or column doesn't exist in DataFrame.
@@ -95,23 +159,21 @@ def vectorize(
     if column not in df.columns:
         raise ValueError(f"Column '{column}' not found in DataFrame.")
     
-    embeddings_numpy_file = embeddings_numpy_file
     vectors = []
     embeddings = None
+    n = df.shape[0]
 
     try:
-        # Process rows in batches
-        for i in tqdm(range(df.shape[0]), desc="Processing sequences"):
-            emb = get_emb(model, tokenizer, df.loc[i, column])
-            vectors.append(emb.reshape(1, -1))
+        for start in tqdm(range(0, n, infer_batch_size), desc="Processing sequences"):
+            batch_seqs = df[column].iloc[start:start + infer_batch_size].tolist()
+            batch_embs = get_emb_ntv3(model, tokenizer, batch_seqs)
+            vectors.append(batch_embs)
 
-            # Save batch to file when reaching batch_size
-            if len(vectors) >= batch_size:
+            if sum(v.shape[0] for v in vectors) >= save_batch_size:
                 vectors = np.vstack(vectors)
                 embeddings = _save_embeddings_batch(vectors, embeddings_numpy_file)
                 vectors = []
 
-        # Save any remaining vectors after processing all rows
         if vectors:
             vectors = np.vstack(vectors)
             embeddings = _save_embeddings_batch(vectors, embeddings_numpy_file)
@@ -162,14 +224,14 @@ def _file_exists(file_path: str) -> bool:
 
 
 def main() -> None:
-    model, tokenizer = load_model_from_hf(cfg.MODEL_ID)
+    model, tokenizer = load_model_from_hf(cfg.MODEL_ID, maskedlm=True)
 
-    df = parse_fasta(
-        file=Path(cfg.DATA_FILE),
-        gzipped=False
-    )
-
-    embed_column = 'Seq'
+    # df = parse_fasta(
+    #     file=Path(cfg.DATA_FILE),
+    #     gzipped=False
+    # )
+    df = pd.read_csv("C:\\Users\\mikel\\Documents\\PhD\\Data\\Genomes\\Greengenes2\\2024.09\\df.2024.09.backbone.full-length.V3V4.csv.gz", sep="\t")
+    embed_column = 'V3V4'
 
     if cfg.REGION:
         df[cfg.REGION] = df['Seq'].apply(lambda x: get_region(region=cfg.REGION, seq=x))

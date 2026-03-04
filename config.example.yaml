@@ -1,0 +1,34 @@
+# fasta-embed configuration
+# Copy this file to config.yaml and adjust as needed.
+# Every key here can also be overridden via CLI flags.
+
+# Embedder strategy.  Run `python -m fasta_embed --list-embedders` to see all.
+embedder: ntv3
+
+# HuggingFace model ID or local path.
+# When null, each embedder uses its own default model.
+model_id: null
+
+# Input file (FASTA or CSV/TSV).
+input_file: dna-sequences.fasta
+input_format: null             # Inferred from extension. Override with "fasta" or "csv".
+
+# Output numpy file for the embedding matrix.
+output_file: embedding.npy
+
+# 16S variable region to extract before embedding (null = use full sequence).
+# Supported: V1V2, V1V3, V3V4, V4, V4V5, V6V8, V7V9, V1V8, V1V9
+region: null
+
+# Sequences per model forward pass (GPU batch size).
+inference_batch_size: 16
+
+# Embeddings to accumulate in memory before flushing to disk.
+save_batch_size: 10000
+
+# Torch device (null = auto-detect CUDA/CPU).
+device: null
+
+# CSV-specific settings (ignored for FASTA input).
+csv_separator: "\t"
+sequence_column: Seq
