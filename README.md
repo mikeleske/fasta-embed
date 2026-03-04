@@ -3,7 +3,7 @@
 **Embed your DNA sequences into vector space**
 
 Generate dense embeddings for DNA sequences using pluggable model backends
-(DNABERT-S, Nucleotide Transformer, NTv3, or your own).
+(DNABERT-S, Nucleotide Transformer v2 & 3, or your own).
 
 ## Installation
 
@@ -27,11 +27,11 @@ python -m fasta_embed --config config.yaml --region V3V4 --device cuda:0
 
 ## Available embedders
 
-| Name                     | Default model                                           |
-|--------------------------|---------------------------------------------------------|
-| `dnabert`                | `zhihan1996/DNABERT-S`                                  |
-| `nucleotide-transformer` | `InstaDeepAI/nucleotide-transformer-2.5b-multi-species` |
-| `ntv3`                   | `InstaDeepAI/NTv3_8M_pre`                               |
+| Name                     | Default model                                              |
+|--------------------------|------------------------------------------------------------|
+| `dnabert`                | `zhihan1996/DNABERT-S`                                     |
+| `ntv2`                   | `InstaDeepAI/nucleotide-transformer-v2-100m-multi-species` |
+| `ntv3`                   | `InstaDeepAI/NTv3_8M_pre`                                  |
 
 List them at any time:
 
