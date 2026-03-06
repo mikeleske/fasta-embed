@@ -38,8 +38,8 @@ class DNABERTEmbedder(Embedder):
         self.model = AutoModel.from_pretrained(
             self.model_id,
             trust_remote_code=True,
-            device_map={"": str(self.device)},
-        )
+            low_cpu_mem_usage=False,
+        ).to(self.device)
 
     def embed(self, sequence: str) -> np.ndarray:
         return self.embed_batch([sequence])[0]
