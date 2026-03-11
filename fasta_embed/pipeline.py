@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-
 from tqdm import tqdm
 
 from .config import EmbedConfig
 from .embedders.base import Embedder
-from .io import EmbeddingWriter, iter_sequences
+from .io import EmbeddingWriter, SequenceBatches, iter_sequences  # noqa: F401
 
 log = logging.getLogger(__name__)
 
@@ -28,13 +26,19 @@ def run(embedder: Embedder, config: EmbedConfig) -> None:
         sequence_column=config.sequence_column,
         region=config.region,
     )
+    log.info(
+        "Found %d sequences (%d batches of %d)",
+        batches.total_sequences,
+        len(batches),
+        config.inference_batch_size,
+    )
 
     vectorize(embedder, batches, config.output_file)
 
 
 def vectorize(
     embedder: Embedder,
-    batches: Iterator[list[str]],
+    batches: SequenceBatches,
     output_file: str,
 ) -> None:
     """Consume *batches* of sequences, embed each batch, and stream to disk.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import math
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -64,8 +65,88 @@ def _iter_csv(path: Path, sep: str, column: str) -> Iterator[str]:
 
 
 # ------------------------------------------------------------------
+# Fast sequence counting
+# ------------------------------------------------------------------
+
+def _count_fasta(path: Path) -> int:
+    """Count records in a (possibly gzipped) FASTA by counting '>' lines."""
+    is_gzipped = (
+        path.suffix == ".gz"
+        or path.suffixes[-2:] == [".fasta", ".gz"]
+    )
+    opener = gzip.open if is_gzipped else open
+    count = 0
+    with opener(path, "rt") as fh:
+        for line in fh:
+            if line.startswith(">"):
+                count += 1
+    return count
+
+
+def _count_csv(path: Path) -> int:
+    """Count data rows in a (possibly gzipped) CSV by counting lines minus
+    the header."""
+    is_gzipped = path.suffix == ".gz"
+    opener = gzip.open if is_gzipped else open
+    count = -1  # exclude header
+    with opener(path, "rt") as fh:
+        for _ in fh:
+            count += 1
+    return max(count, 0)
+
+
+# ------------------------------------------------------------------
 # Batched sequence iterator (main entry point for the pipeline)
 # ------------------------------------------------------------------
+
+class SequenceBatches:
+    """Iterable that yields batches of sequences and exposes ``__len__``
+    (total number of batches) so ``tqdm`` can display a proper progress bar.
+
+    Prefer using :func:`iter_sequences` to construct instances.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        fmt: str,
+        batch_size: int,
+        csv_separator: str,
+        sequence_column: str,
+        region: str | None,
+        total_sequences: int,
+    ) -> None:
+        self._path = path
+        self._fmt = fmt
+        self._batch_size = batch_size
+        self._csv_separator = csv_separator
+        self._sequence_column = sequence_column
+        self._region = region
+        self.total_sequences = total_sequences
+
+    def __len__(self) -> int:
+        return math.ceil(self.total_sequences / self._batch_size)
+
+    def __iter__(self) -> Iterator[list[str]]:
+        if self._fmt == "fasta":
+            seqs = _iter_fasta(self._path)
+        else:
+            seqs = _iter_csv(
+                self._path, self._csv_separator, self._sequence_column,
+            )
+
+        if self._region:
+            seqs = (get_region(self._region, s) for s in seqs)
+
+        batch: list[str] = []
+        for seq in seqs:
+            batch.append(seq)
+            if len(batch) >= self._batch_size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
 
 def iter_sequences(
     path: str | Path,
@@ -75,11 +156,12 @@ def iter_sequences(
     csv_separator: str = "\t",
     sequence_column: str = "Seq",
     region: str | None = None,
-) -> Iterator[list[str]]:
-    """Yield batches of sequences from *path*.
+) -> SequenceBatches:
+    """Return a :class:`SequenceBatches` iterable over *path*.
 
     Handles format detection, column selection, and optional 16S region
     extraction.  Each yielded item is a list of up to *batch_size* strings.
+    ``len()`` returns the total number of batches.
 
     Parameters
     ----------
@@ -101,25 +183,23 @@ def iter_sequences(
     fmt = fmt or _infer_format(path)
 
     if fmt == "fasta":
-        seqs = _iter_fasta(path)
+        total = _count_fasta(path)
     elif fmt == "csv":
-        seqs = _iter_csv(path, csv_separator, sequence_column)
+        total = _count_csv(path)
     else:
         raise ValueError(
             f"Unsupported input format: '{fmt}' (use 'fasta' or 'csv')"
         )
 
-    if region:
-        seqs = (get_region(region, s) for s in seqs)
-
-    batch: list[str] = []
-    for seq in seqs:
-        batch.append(seq)
-        if len(batch) >= batch_size:
-            yield batch
-            batch = []
-    if batch:
-        yield batch
+    return SequenceBatches(
+        path=path,
+        fmt=fmt,
+        batch_size=batch_size,
+        csv_separator=csv_separator,
+        sequence_column=sequence_column,
+        region=region,
+        total_sequences=total,
+    )
 
 
 # ------------------------------------------------------------------
