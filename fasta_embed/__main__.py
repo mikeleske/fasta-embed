@@ -51,13 +51,6 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Sequences per model forward pass (default: 16)",
     )
-    p.add_argument(
-        "--save-batch-size",
-        metavar="N",
-        dest="save_batch_size",
-        type=int,
-        help="Embeddings to accumulate before saving to disk (default: 10000)",
-    )
     p.add_argument("--device", metavar="DEV", help="Torch device, e.g. cuda:0 or cpu")  # noqa: E501
     p.add_argument(
         "--csv-separator",

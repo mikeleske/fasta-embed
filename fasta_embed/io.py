@@ -198,17 +198,54 @@ def _parse_fasta(path: Path) -> pd.DataFrame:
 # Embedding persistence
 # ------------------------------------------------------------------
 
-def save_embeddings_batch(
-    vectors: np.ndarray,
-    file_path: str | Path,
-) -> np.ndarray:
-    """Append *vectors* to the numpy file at *file_path*, creating it if
-    necessary.  Returns the full (concatenated) array on disk."""
-    file_path = Path(file_path)
-    if file_path.exists():
-        existing = np.load(file_path)
-        combined = np.concatenate((existing, vectors), axis=0)
-    else:
-        combined = vectors
-    np.save(file_path, combined)
-    return combined
+class EmbeddingWriter:
+    """Efficiently accumulate embeddings by appending raw bytes to a
+    temporary binary file.  Each ``append`` call is O(batch) regardless
+    of how many embeddings have already been written.
+
+    Call :meth:`finalize` once at the end to produce the ``.npy`` output.
+
+    Usage::
+
+        writer = EmbeddingWriter("embeddings.npy")
+        writer.append(batch_1)
+        writer.append(batch_2)
+        writer.finalize()
+    """
+
+    def __init__(self, output_path: str | Path) -> None:
+        self.output_path = Path(output_path)
+        self._raw_path = self.output_path.with_suffix(".bin")
+        self._rows = 0
+        self._embed_dim: tuple[int, ...] | None = None
+        self._dtype: np.dtype | None = None
+
+    @property
+    def count(self) -> int:
+        """Total number of embedding rows written so far."""
+        return self._rows
+
+    def append(self, vectors: np.ndarray) -> int:
+        """Append *vectors* to the backing binary file.
+
+        Returns the cumulative number of rows written.
+        """
+        if self._dtype is None:
+            self._dtype = vectors.dtype
+            self._embed_dim = vectors.shape[1:]
+        with open(self._raw_path, "ab") as fh:
+            fh.write(np.ascontiguousarray(vectors).tobytes())
+        self._rows += vectors.shape[0]
+        return self._rows
+
+    def finalize(self) -> None:
+        """Convert the raw binary file into the final ``.npy`` and clean up."""
+        if self._rows == 0:
+            return
+        shape = (self._rows, *self._embed_dim)
+        raw = np.memmap(
+            self._raw_path, dtype=self._dtype, mode="r", shape=shape,
+        )
+        np.save(self.output_path, raw)
+        del raw
+        self._raw_path.unlink()

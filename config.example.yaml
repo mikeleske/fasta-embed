@@ -23,9 +23,6 @@ region: null
 # Sequences per model forward pass (GPU batch size).
 inference_batch_size: 16
 
-# Embeddings to accumulate in memory before flushing to disk.
-save_batch_size: 10000
-
 # Torch device (null = auto-detect CUDA/CPU).
 device: null
 

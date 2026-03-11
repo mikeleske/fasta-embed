@@ -5,12 +5,11 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 
-import numpy as np
 from tqdm import tqdm
 
 from .config import EmbedConfig
 from .embedders.base import Embedder
-from .io import iter_sequences, save_embeddings_batch
+from .io import EmbeddingWriter, iter_sequences
 
 log = logging.getLogger(__name__)
 
@@ -30,16 +29,15 @@ def run(embedder: Embedder, config: EmbedConfig) -> None:
         region=config.region,
     )
 
-    vectorize(embedder, batches, config.output_file, config.save_batch_size)
+    vectorize(embedder, batches, config.output_file)
 
 
 def vectorize(
     embedder: Embedder,
     batches: Iterator[list[str]],
     output_file: str,
-    save_batch_size: int = 10_000,
 ) -> None:
-    """Consume *batches* of sequences, embed each batch, and flush to disk.
+    """Consume *batches* of sequences, embed each batch, and stream to disk.
 
     Parameters
     ----------
@@ -50,23 +48,14 @@ def vectorize(
         batch, already sized by ``iter_sequences``).
     output_file:
         Path for the ``.npy`` output.
-    save_batch_size:
-        Embeddings to accumulate before flushing to disk.
     """
-    vectors: list[np.ndarray] = []
-    accumulated = 0
+    writer = EmbeddingWriter(output_file)
 
     for batch in tqdm(batches, desc="Embedding"):
         embs = embedder.embed_batch(batch)
-        vectors.append(embs)
-        accumulated += embs.shape[0]
+        writer.append(embs)
 
-        if accumulated >= save_batch_size:
-            save_embeddings_batch(np.vstack(vectors), output_file)
-            vectors = []
-            accumulated = 0
-
-    if vectors:
-        save_embeddings_batch(np.vstack(vectors), output_file)
-
-    log.info("Done. Embeddings saved to %s", output_file)
+    writer.finalize()
+    log.info(
+        "Done. %d embeddings saved to %s", writer.count, output_file,
+    )

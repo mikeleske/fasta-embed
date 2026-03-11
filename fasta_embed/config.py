@@ -24,7 +24,6 @@ class EmbedConfig:
     output_file: str = "embedding.npy"
     region: str | None = None
     inference_batch_size: int = 16
-    save_batch_size: int = 10_000
     device: str | None = None
     csv_separator: str = "\t"
     sequence_column: str = "Seq"
