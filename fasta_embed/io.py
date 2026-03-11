@@ -299,6 +299,7 @@ class EmbeddingWriter:
         self._rows = 0
         self._embed_dim: tuple[int, ...] | None = None
         self._dtype: np.dtype | None = None
+        self._fh = None
 
     @property
     def count(self) -> int:
@@ -313,19 +314,37 @@ class EmbeddingWriter:
         if self._dtype is None:
             self._dtype = vectors.dtype
             self._embed_dim = vectors.shape[1:]
-        with open(self._raw_path, "ab") as fh:
-            fh.write(np.ascontiguousarray(vectors).tobytes())
+        if self._fh is None:
+            self._fh = open(self._raw_path, "ab")  # noqa: SIM115
+        self._fh.write(np.ascontiguousarray(vectors).tobytes())
         self._rows += vectors.shape[0]
         return self._rows
 
     def finalize(self) -> None:
         """Convert the raw binary file into the final ``.npy`` and clean up."""
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
         if self._rows == 0:
             return
+
         shape = (self._rows, *self._embed_dim)
-        raw = np.memmap(
-            self._raw_path, dtype=self._dtype, mode="r", shape=shape,
-        )
-        np.save(self.output_path, raw)
-        del raw
+        header_info = {
+            "descr": np.lib.format.dtype_to_descr(self._dtype),
+            "fortran_order": False,
+            "shape": shape,
+        }
+
+        # Stream the raw binary into a .npy by writing the header first and
+        # then copying data in fixed-size chunks.  This avoids loading the
+        # entire embedding matrix into memory (np.save would do that even
+        # with a memmap source), keeping peak memory at ~64 MB regardless
+        # of total file size.
+        _CHUNK = 64 * 1024 * 1024  # 64 MB
+        with open(self.output_path, "wb") as out:
+            np.lib.format.write_array_header_2_0(out, header_info)
+            with open(self._raw_path, "rb") as raw:
+                while chunk := raw.read(_CHUNK):
+                    out.write(chunk)
+
         self._raw_path.unlink()
