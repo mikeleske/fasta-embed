@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import gzip
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from Bio import SeqIO
 
+from .bio import get_region
+
 
 # ------------------------------------------------------------------
-# Sequence loading
+# Format detection
 # ------------------------------------------------------------------
 
 _FASTA_EXTENSIONS = {".fasta", ".fa", ".fna", ".fas"}
@@ -36,6 +39,92 @@ def _infer_format(path: Path) -> str:
         f"Use --input-format to specify 'fasta' or 'csv'."
     )
 
+
+# ------------------------------------------------------------------
+# Lazy single-sequence iterators
+# ------------------------------------------------------------------
+
+def _iter_fasta(path: Path) -> Iterator[str]:
+    """Yield one sequence string at a time from a (possibly gzipped) FASTA."""
+    is_gzipped = (
+        path.suffix == ".gz"
+        or path.suffixes[-2:] == [".fasta", ".gz"]
+    )
+    opener = gzip.open if is_gzipped else open
+    with opener(path, "rt") as handle:
+        for rec in SeqIO.parse(handle, "fasta"):
+            yield str(rec.seq)
+
+
+def _iter_csv(path: Path, sep: str, column: str) -> Iterator[str]:
+    """Yield one sequence string at a time from a CSV/TSV, using chunked
+    reading to keep memory usage low."""
+    for chunk in pd.read_csv(path, sep=sep, usecols=[column], chunksize=10_000):
+        yield from chunk[column]
+
+
+# ------------------------------------------------------------------
+# Batched sequence iterator (main entry point for the pipeline)
+# ------------------------------------------------------------------
+
+def iter_sequences(
+    path: str | Path,
+    fmt: str | None = None,
+    *,
+    batch_size: int = 16,
+    csv_separator: str = "\t",
+    sequence_column: str = "Seq",
+    region: str | None = None,
+) -> Iterator[list[str]]:
+    """Yield batches of sequences from *path*.
+
+    Handles format detection, column selection, and optional 16S region
+    extraction.  Each yielded item is a list of up to *batch_size* strings.
+
+    Parameters
+    ----------
+    path:
+        File to read (FASTA, gzipped FASTA, or CSV/TSV).
+    fmt:
+        ``"fasta"`` or ``"csv"``.  Inferred from the file extension when
+        ``None``.
+    batch_size:
+        Maximum number of sequences per yielded batch.
+    csv_separator:
+        Delimiter used when *fmt* is ``"csv"``.
+    sequence_column:
+        Column containing sequences (CSV only).
+    region:
+        Optional 16S region to extract (e.g. ``"V3V4"``).
+    """
+    path = Path(path)
+    fmt = fmt or _infer_format(path)
+
+    if fmt == "fasta":
+        seqs = _iter_fasta(path)
+    elif fmt == "csv":
+        seqs = _iter_csv(path, csv_separator, sequence_column)
+    else:
+        raise ValueError(
+            f"Unsupported input format: '{fmt}' (use 'fasta' or 'csv')"
+        )
+
+    if region:
+        seqs = (get_region(region, s) for s in seqs)
+
+    batch: list[str] = []
+    for seq in seqs:
+        batch.append(seq)
+        if len(batch) >= batch_size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+# ------------------------------------------------------------------
+# Eager DataFrame loader (kept for programmatic / notebook use)
+# ------------------------------------------------------------------
 
 def load_sequences(
     path: str | Path,
@@ -78,13 +167,18 @@ def load_sequences(
             )
         return df
 
-    raise ValueError(f"Unsupported input format: '{fmt}' (use 'fasta' or 'csv')")  # noqa: E501
+    raise ValueError(
+        f"Unsupported input format: '{fmt}' (use 'fasta' or 'csv')"
+    )
 
 
 def _parse_fasta(path: Path) -> pd.DataFrame:
     """Parse a (possibly gzipped) FASTA file into a DataFrame with columns
     ``ID``, ``SeqLen``, ``Seq``."""
-    is_gzipped = path.suffix == ".gz" or path.suffixes[-2:] == [".fasta", ".gz"]  # noqa: E501
+    is_gzipped = (
+        path.suffix == ".gz"
+        or path.suffixes[-2:] == [".fasta", ".gz"]
+    )
     opener = gzip.open if is_gzipped else open
 
     rows: list[dict] = []
@@ -104,7 +198,10 @@ def _parse_fasta(path: Path) -> pd.DataFrame:
 # Embedding persistence
 # ------------------------------------------------------------------
 
-def save_embeddings_batch(vectors: np.ndarray, file_path: str | Path) -> np.ndarray:  # noqa: E501
+def save_embeddings_batch(
+    vectors: np.ndarray,
+    file_path: str | Path,
+) -> np.ndarray:
     """Append *vectors* to the numpy file at *file_path*, creating it if
     necessary.  Returns the full (concatenated) array on disk."""
     file_path = Path(file_path)
