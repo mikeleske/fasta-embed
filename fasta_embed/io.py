@@ -60,7 +60,7 @@ def _iter_fasta(path: Path) -> Iterator[str]:
 def _iter_csv(path: Path, sep: str, column: str) -> Iterator[str]:
     """Yield one sequence string at a time from a CSV/TSV, using chunked
     reading to keep memory usage low."""
-    for chunk in pd.read_csv(path, sep=sep, usecols=[column], chunksize=10_000):
+    for chunk in pd.read_csv(path, sep=sep, usecols=[column], chunksize=10_000):  # noqa: E501
         yield from chunk[column]
 
 
