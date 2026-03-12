@@ -50,6 +50,11 @@ PRIMERS_REGEX: dict[str, str] = {
     "1492R": "TACGG[CT]TACCTTGTTACGACTT",
 }
 
+# Pre-compiled patterns -- avoids re-compiling on every call to _find_primers.
+_COMPILED_REGEX: dict[str, re.Pattern] = {
+    name: re.compile(pattern) for name, pattern in PRIMERS_REGEX.items()
+}
+
 _REGION_PRIMERS: dict[str, tuple[str, str]] = {
     "V1V2": ("27F", "338R"),
     "V1V3": ("27F", "534R"),
@@ -70,9 +75,12 @@ def _find_primers(
 ) -> tuple[str | None, str | None]:
     """Locate forward and reverse primer sequences within *seq*."""
     rev_seq = str(Seq(seq).reverse_complement())
-    f_match = re.findall(PRIMERS_REGEX[forward_name], seq)
-    r_match = re.findall(PRIMERS_REGEX[reverse_name], rev_seq)
-    return (f_match[0] if f_match else None, r_match[0] if r_match else None)
+    f_match = _COMPILED_REGEX[forward_name].search(seq)
+    r_match = _COMPILED_REGEX[reverse_name].search(rev_seq)
+    return (
+        f_match.group() if f_match else None,
+        r_match.group() if r_match else None,
+    )
 
 
 def get_region(region: str, seq: str) -> str:
