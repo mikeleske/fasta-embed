@@ -139,35 +139,45 @@ class Evo2Embedder(Embedder):
     def embed_batch(self, sequences: list[str]) -> np.ndarray:
         """Return a 2-D array of shape ``(len(sequences), hidden_dim)``.
 
-        Each sequence is tokenized individually and forwarded through Evo 2
-        with ``return_embeddings=True``.  The hidden states at
-        ``self.layer_name`` are mean-pooled over the sequence length
-        dimension to yield one vector per sequence.
+        All sequences are tokenized, right-padded to the longest sequence in
+        the batch, and forwarded through Evo 2 in a single GPU call.  The
+        hidden states at ``self.layer_name`` are masked-mean-pooled over the
+        non-padding positions so that pad tokens do not influence the vectors.
 
-        Processing is sequential rather than truly batched because Evo 2
-        uses a character-level tokenizer that produces variable-length
-        token tensors; unified batching would require padding logic that
-        is not exposed in the public API.
+        This gives one forward pass per pipeline batch instead of one per
+        sequence, which saturates the GPU properly on large datasets.
         """
-        device_str = str(self.device)
-        vectors: list[np.ndarray] = []
+        # Tokenize all sequences and find the longest.
+        token_lists: list[list[int]] = [
+            self._model.tokenizer.tokenize(s) for s in sequences
+        ]
+        max_len = max(len(t) for t in token_lists)
 
-        for seq in sequences:
-            input_ids = torch.tensor(
-                self._model.tokenizer.tokenize(seq),
-                dtype=torch.int,
-            ).unsqueeze(0).to(device_str)
+        # Use the tokenizer's pad id when available, fall back to 0.
+        pad_id: int = getattr(self._model.tokenizer, "pad_token_id", None) or 0
 
-            with torch.no_grad():
-                _, layer_embeddings = self._model(
-                    input_ids,
-                    return_embeddings=True,
-                    layer_names=[self.layer_name],
-                )
+        # Build (B, L) input tensor and boolean attention mask.
+        padded: list[list[int]] = []
+        mask_rows: list[list[int]] = []
+        for toks in token_lists:
+            pad_len = max_len - len(toks)
+            padded.append(toks + [pad_id] * pad_len)
+            mask_rows.append([1] * len(toks) + [0] * pad_len)
 
-            # layer_embeddings: dict[str, Tensor]  shape (1, seq_len, D)
-            hidden = layer_embeddings[self.layer_name]  # (1, L, D)
-            vec = hidden.squeeze(0).mean(dim=0).cpu().float().numpy()
-            vectors.append(vec)
+        input_ids = torch.tensor(padded, dtype=torch.int).to(self.device)
+        attention_mask = torch.tensor(
+            mask_rows, dtype=torch.long
+        ).to(self.device)
 
-        return np.vstack(vectors)
+        with torch.no_grad():
+            _, layer_embeddings = self._model(
+                input_ids,
+                return_embeddings=True,
+                layer_names=[self.layer_name],
+            )
+
+        # hidden: (B, L, D) — mask out padding before mean pooling.
+        hidden = layer_embeddings[self.layer_name]
+        mask = attention_mask.unsqueeze(-1).float()  # (B, L, 1)
+        mean_emb = (hidden * mask).sum(dim=1) / mask.sum(dim=1)  # (B, D)
+        return mean_emb.cpu().float().numpy()
