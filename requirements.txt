@@ -7,3 +7,8 @@ accelerate
 einops
 pyyaml
 tqdm
+# evo2 embedder — install separately (requires flash-attn first):
+#   pip install flash-attn==2.8.0.post2 --no-build-isolation
+#   pip install evo2
+# See https://github.com/arcinstitute/evo2 for full install instructions.
+# evo2
