@@ -176,8 +176,10 @@ class Evo2Embedder(Embedder):
                 layer_names=[self.layer_name],
             )
 
-        # hidden: (B, L, D) — mask out padding before mean pooling.
+        # hidden: (B, L, D) — keep mask in hidden dtype to avoid an fp32
+        # upcast that can hurt throughput on H100.
         hidden = layer_embeddings[self.layer_name]
-        mask = attention_mask.unsqueeze(-1).float()  # (B, L, 1)
-        mean_emb = (hidden * mask).sum(dim=1) / mask.sum(dim=1)  # (B, D)
+        mask = attention_mask.unsqueeze(-1).to(dtype=hidden.dtype)  # (B, L, 1)
+        denom = mask.sum(dim=1).clamp_min(torch.finfo(hidden.dtype).eps)
+        mean_emb = (hidden * mask).sum(dim=1) / denom  # (B, D)
         return mean_emb.cpu().float().numpy()
