@@ -114,6 +114,14 @@ class Evo2Embedder(Embedder):
                 "See https://github.com/arcinstitute/evo2 for full details."
             ) from exc
 
+        # PyTorch ≥ 2.6 sets weights_only=True by default, which blocks the
+        # _codecs.encode global used in the Evo 2 checkpoint format.
+        # Allowlisting it is safe: the checkpoint comes from a trusted source
+        # (ArcInstitute HuggingFace Hub) and this is the approach recommended
+        # by PyTorch's own error message (option 2).
+        import _codecs  # noqa: PLC0415
+        torch.serialization.add_safe_globals([_codecs.encode])
+
         self.device = torch.device(
             self._device_request
             or ("cuda" if torch.cuda.is_available() else "cpu")
