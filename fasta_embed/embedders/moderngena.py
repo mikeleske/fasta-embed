@@ -13,6 +13,7 @@ backends in this project.
 from __future__ import annotations
 
 import importlib.util
+import logging
 
 import numpy as np
 import torch
@@ -20,6 +21,8 @@ from transformers import AutoModel, AutoTokenizer
 
 from . import register
 from .base import Embedder
+
+log = logging.getLogger(__name__)
 
 
 class _ModernGENAEmbedder(Embedder):
@@ -46,17 +49,36 @@ class _ModernGENAEmbedder(Embedder):
 
         # The model docs recommend enabling FlashAttention2 when available.
         model_kwargs: dict[str, object] = {"trust_remote_code": True}
-        if importlib.util.find_spec("flash_attn") is not None:
+        has_flash_attn = importlib.util.find_spec("flash_attn") is not None
+        if self.device.type == "cuda":
+            # FlashAttention kernels require fp16/bf16 tensors.
+            model_kwargs["torch_dtype"] = torch.bfloat16
+        if has_flash_attn:
             model_kwargs["attn_implementation"] = "flash_attention_2"
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.model_id,
             trust_remote_code=True,
         )
-        self.model = AutoModel.from_pretrained(
-            self.model_id,
-            **model_kwargs,
-        ).to(self.device)
+        try:
+            self.model = AutoModel.from_pretrained(
+                self.model_id,
+                **model_kwargs,
+            ).to(self.device)
+        except RuntimeError as exc:
+            if not has_flash_attn:
+                raise
+            log.warning(
+                "Failed to initialize modernGENA with FlashAttention2 (%s). "
+                "Falling back to eager attention.",
+                exc,
+            )
+            fallback_kwargs = dict(model_kwargs)
+            fallback_kwargs["attn_implementation"] = "eager"
+            self.model = AutoModel.from_pretrained(
+                self.model_id,
+                **fallback_kwargs,
+            ).to(self.device)
         self.model.eval()
 
     def embed(self, sequence: str) -> np.ndarray:
