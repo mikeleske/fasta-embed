@@ -345,4 +345,30 @@ Returns a sorted list of all registered embedder names.
 | `model_id` | `str \| None` | `"InstaDeepAI/NTv3_100M_pre"` |
 | `device` | `str \| None` | Auto-detected |
 
-All three implementations share the same constructor signature `(model_id, device)` and override both `embed()` and `embed_batch()` for efficient GPU batching. See [Embedder System](embedders.md) for pooling strategy details.
+#### `Evo2Embedder` — registered as `"evo2"`
+
+| Constructor Param | Type | Default |
+|---|---|---|
+| `model_id` | `str \| None` | `"evo2_1b_base"` |
+| `device` | `str \| None` | Auto-detected |
+| `layer_name` | `str \| None` | `"blocks.20.mlp.l3"` |
+
+#### `ModernGENABaseEmbedder` — registered as `"moderngena-base"`
+
+Aliases: `"moderGena-base"` (mixed-case typo compatibility).
+
+| Constructor Param | Type | Default |
+|---|---|---|
+| `model_id` | `str \| None` | `"AIRI-Institute/moderngena-base"` |
+| `device` | `str \| None` | Auto-detected |
+
+#### `ModernGENALargeEmbedder` — registered as `"moderngena-large"`
+
+Aliases: `"modernGEna-large"` (mixed-case typo compatibility).
+
+| Constructor Param | Type | Default |
+|---|---|---|
+| `model_id` | `str \| None` | `"AIRI-Institute/moderngena-large"` |
+| `device` | `str \| None` | Auto-detected |
+
+All implementations share the constructor pattern `(model_id, device)` (with optional model-specific extras like Evo2's `layer_name`) and implement `embed()` plus `embed_batch()`. See [Embedder System](embedders.md) for pooling strategy details.

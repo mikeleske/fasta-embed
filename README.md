@@ -32,6 +32,9 @@ python -m fasta_embed --config config.yaml --region V3V4 --device cuda:0
 | `dnabert` | `zhihan1996/DNABERT-S` |
 | `ntv2` | `InstaDeepAI/nucleotide-transformer-v2-100m-multi-species` |
 | `ntv3` | `InstaDeepAI/NTv3_100M_pre` |
+| `evo2` | `evo2_1b_base` |
+| `moderngena-base` | `AIRI-Institute/moderngena-base` |
+| `moderngena-large` | `AIRI-Institute/moderngena-large` |
 
 List them at any time:
 

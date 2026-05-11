@@ -48,3 +48,4 @@ from . import dnabert  # noqa: E402, F401
 from . import ntv2  # noqa: E402, F401
 from . import ntv3  # noqa: E402, F401
 from . import evo2  # noqa: E402, F401
+from . import moderngena  # noqa: E402, F401

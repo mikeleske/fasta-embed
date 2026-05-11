@@ -66,10 +66,34 @@ classDiagram
         +embed_batch(sequences: list~str~) np.ndarray
     }
 
+    class ModernGENABaseEmbedder {
+        -DEFAULT_MODEL_ID = "AIRI-Institute/moderngena-base"
+        -model_id: str
+        -device: torch.device
+        -model: AutoModel
+        -tokenizer: AutoTokenizer
+        +load() void
+        +embed(sequence: str) np.ndarray
+        +embed_batch(sequences: list~str~) np.ndarray
+    }
+
+    class ModernGENALargeEmbedder {
+        -DEFAULT_MODEL_ID = "AIRI-Institute/moderngena-large"
+        -model_id: str
+        -device: torch.device
+        -model: AutoModel
+        -tokenizer: AutoTokenizer
+        +load() void
+        +embed(sequence: str) np.ndarray
+        +embed_batch(sequences: list~str~) np.ndarray
+    }
+
     Embedder <|-- DNABERTEmbedder : "@register('dnabert')"
     Embedder <|-- NTv2Embedder : "@register('ntv2')"
     Embedder <|-- NTv3Embedder : "@register('ntv3')"
     Embedder <|-- Evo2Embedder : "@register('evo2')"
+    Embedder <|-- ModernGENABaseEmbedder : "@register('moderngena-base')"
+    Embedder <|-- ModernGENALargeEmbedder : "@register('moderngena-large')"
 ```
 
 ---
@@ -81,20 +105,24 @@ The registry is a module-level dictionary `_REGISTRY: dict[str, type[Embedder]]`
 ```mermaid
 flowchart LR
     subgraph "Import Time"
-        A["embedders/__init__.py<br/>imports dnabert, ntv2, ntv3, evo2"] --> B["@register('dnabert')<br/>executes on DNABERTEmbedder"]
+        A["embedders/__init__.py<br/>imports dnabert, ntv2, ntv3, evo2, moderngena"] --> B["@register('dnabert')<br/>executes on DNABERTEmbedder"]
         A --> C["@register('ntv2')<br/>executes on NTv2Embedder"]
         A --> D["@register('ntv3')<br/>executes on NTv3Embedder"]
         A --> E2["@register('evo2')<br/>executes on Evo2Embedder"]
+        A --> E3["@register('moderngena-base')<br/>executes on ModernGENABaseEmbedder"]
+        A --> E4["@register('moderngena-large')<br/>executes on ModernGENALargeEmbedder"]
     end
 
     subgraph "_REGISTRY"
-        R["{ 'dnabert': DNABERTEmbedder,<br/>'evo2': Evo2Embedder,<br/>'ntv2': NTv2Embedder,<br/>'ntv3': NTv3Embedder }"]
+        R["{ 'dnabert': DNABERTEmbedder,<br/>'evo2': Evo2Embedder,<br/>'moderngena-base': ModernGENABaseEmbedder,<br/>'moderngena-large': ModernGENALargeEmbedder,<br/>'ntv2': NTv2Embedder,<br/>'ntv3': NTv3Embedder }"]
     end
 
     B --> R
     C --> R
     D --> R
     E2 --> R
+    E3 --> R
+    E4 --> R
 
     subgraph "Runtime"
         E["create_embedder('ntv3',<br/>device='cuda:0')"] --> F["_REGISTRY['ntv3']<br/>(device='cuda:0')"]
@@ -239,15 +267,37 @@ embedder.load()
 
 ---
 
+### modernGENA base (`moderngena-base`)
+
+| Property | Value |
+|---|---|
+| Default model | `AIRI-Institute/moderngena-base` |
+| Model class | `AutoModel` |
+| Pooling | Attention-mask-weighted mean pooling over `last_hidden_state` |
+| Tokenization | Standard HuggingFace tokenizer with padding |
+| Acceleration | Uses `attn_implementation="flash_attention_2"` when `flash_attn` is installed |
+
+### modernGENA large (`moderngena-large`)
+
+| Property | Value |
+|---|---|
+| Default model | `AIRI-Institute/moderngena-large` |
+| Model class | `AutoModel` |
+| Pooling | Attention-mask-weighted mean pooling over `last_hidden_state` |
+| Tokenization | Standard HuggingFace tokenizer with padding |
+| Acceleration | Uses `attn_implementation="flash_attention_2"` when `flash_attn` is installed |
+
+---
+
 ## Comparison Table
 
-| Feature | DNABERT-S | NT v2 | NT v3 | Evo 2 |
-|---|---|---|---|---|
-| Architecture | BERT (encoder) | BERT (masked-LM) | BERT (masked-LM) | StripedHyena 2 (autoregressive) |
-| Hidden state used | First (`[0]`) | Last (`[-1]`) | Last (`[-1]`) | Named intermediate layer |
-| Model API | `AutoModel` | `AutoModelForMaskedLM` | `AutoModelForMaskedLM` | `Evo2` (custom) |
-| Special tokens | Default | Default | Disabled | N/A (char-level) |
-| Padding strategy | Standard | Standard | Multiple of 128 | None (sequential) |
-| Attention mask source | Tokenizer output | Recomputed from `pad_token_id` | Recomputed from `pad_token_id` | Not used |
-| Batch inference | True batched | True batched | True batched | Sequential |
-| Install source | HuggingFace | HuggingFace | HuggingFace | `pip install evo2` |
+| Feature | DNABERT-S | NT v2 | NT v3 | Evo 2 | modernGENA base | modernGENA large |
+|---|---|---|---|---|---|---|
+| Architecture | BERT (encoder) | BERT (masked-LM) | BERT (masked-LM) | StripedHyena 2 (autoregressive) | ModernBERT-style encoder | ModernBERT-style encoder |
+| Hidden state used | First (`[0]`) | Last (`[-1]`) | Last (`[-1]`) | Named intermediate layer | Last (`last_hidden_state`) | Last (`last_hidden_state`) |
+| Model API | `AutoModel` | `AutoModelForMaskedLM` | `AutoModelForMaskedLM` | `Evo2` (custom) | `AutoModel` | `AutoModel` |
+| Special tokens | Default | Default | Disabled | N/A (char-level) | Default | Default |
+| Padding strategy | Standard | Standard | Multiple of 128 | Batch pad to max length | Standard | Standard |
+| Attention mask source | Tokenizer output | Recomputed from `pad_token_id` | Recomputed from `pad_token_id` | Explicit mask after padding | Tokenizer output (fallback from `pad_token_id`) | Tokenizer output (fallback from `pad_token_id`) |
+| Batch inference | True batched | True batched | True batched | True batched | True batched | True batched |
+| Install source | HuggingFace | HuggingFace | HuggingFace | `pip install evo2` | HuggingFace | HuggingFace |
